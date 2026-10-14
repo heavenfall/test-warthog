@@ -13,5 +13,9 @@ include(cmake/warthog.cmake)
 warthog_module_declare(warthog-core) # is optional, remove for default of main
 warthog_module(warthog-core)
 
-add_executable(hash src/hash_table.cpp)
+add_executable(hash src/speed.cpp src/hash_table.cpp)
+target_include_directories(hash PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
 target_link_libraries(hash PUBLIC warthog::core)
