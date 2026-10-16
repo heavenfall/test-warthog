@@ -1,5 +1,7 @@
 #include <whtest/speed.h>
 #include <warthog/data/hash_table.h>
+#include <warthog/memory/alloc/bump_factory.h>
+#include <absl/container/flat_hash_map.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -170,9 +172,10 @@ public:
 	using key = Key;
 	using value = Value;
 
-	wh_hash_table(size_t buckets)
+	template <typename... Args>
+	wh_hash_table(size_t buckets, Args&&... args)
 	{
-		table.factory_setup();
+		table.factory_setup(std::forward<Args>(args)...);
 		table.rehash(buckets);
 	}
 
@@ -180,6 +183,24 @@ public:
 	{
 		using namespace std::string_view_literals;
 		return std::format("wh{}-{}_{}|{}", type_alias_get<Lookup>("%"sv), type_alias_get<Hash>("#"sv), BucketSize, Rolling);
+	}
+};
+
+template <typename Key, typename Value, typename HT = absl::flat_hash_map<Key, Value>>
+class absl_hash_table
+{
+public:
+	HT table;
+	using key = Key;
+	using value = Value;
+
+	absl_hash_table(size_t buckets) : table(buckets)
+	{ }
+
+	static std::string name()
+	{
+		using namespace std::string_view_literals;
+		return std::format("absl");
 	}
 };
 
@@ -201,7 +222,7 @@ struct hash_test_suite
 	{
 		values_rand = whtest::gen_keys_random<K, V>(sm, size);
 		whtest::fill_values_rng(sm, values_rand);
-		values_inc = whtest::gen_keys_iota<K, V>(sm, size, 8);
+		values_inc = whtest::gen_keys_iota<K, V>(sm, size, 256);
 		whtest::fill_values_rng(sm, values_inc);
 	}
 
@@ -225,11 +246,11 @@ struct hash_test_suite
 		
 		sm.clear_cache();
 		rel = test_insert(T, values_inc);
-		print_result(out, "insert-8step", T, rel);
+		print_result(out, "insert-256step", T, rel);
 		
 		sm.clear_cache();
 		rel = test_check(T, values_inc);
-		print_result(out, "check-8step", T, rel);
+		print_result(out, "check-256step", T, rel);
 	}
 	
 	void print_result(std::ostream& out, std::string_view test_name, auto& T, std::chrono::nanoseconds rel) const
@@ -296,11 +317,11 @@ int main()
 	type_alias_set<warthog::data::aes_hash_default>("aes"sv);
 
 	speed_manager sm;
-	hash_test_suite ts("S-4M");
-	ts.setup(sm, 4'000'000);
-
-	constexpr size_t S = 1ull * 1024 * 1024 * 8;
-	constexpr size_t Swh = S / 2;
+	hash_test_suite ts("S-8M");
+	ts.setup(sm, 8'000'000);
+//https://github.com/Nicoshev/rapidhash
+	constexpr size_t S = 1ull * 1024 * 1024 * 8 * 3 / 2;
+	constexpr size_t Swh = S;
 
 	std_hash_table<K,V,std::hash<K>>
 	M1(S);
@@ -314,25 +335,21 @@ int main()
 	M3(S,4*1024);
 	ts.test(sm, M3, std::cout);
 
-	wh_hash_table<K,V,warthog::data::identity_hash, warthog::data::bucket_lookup_pow2, 4, 0>
+	using large_pool = warthog::memory::alloc::bump_factory<
+		warthog::memory::alloc::slab_factory<warthog::memory::alloc::malloc_factory, 256 * 1024 - 32>
+	>;
+
+	wh_hash_table<K,V,warthog::data::identity_hash, warthog::data::bucket_lookup_pow2, 2, 0, warthog::data::hash_table<K,V,warthog::data::identity_hash,2,warthog::data::bucket_lookup_pow2,0,large_pool>>
 	W1(Swh);
 	ts.test(sm, W1, std::cout);
 
-	wh_hash_table<K,V,warthog::data::identity_hash, warthog::data::bucket_lookup_prime, 4, 0>
+	wh_hash_table<K,V,warthog::data::identity_hash, warthog::data::bucket_lookup_prime, 2, 0>
 	W2(Swh);
 	ts.test(sm, W2, std::cout);
 	
-	wh_hash_table<K,V,warthog::data::aes_hash_default, warthog::data::bucket_lookup_pow2, 4, 0>
-	W3(Swh);
-	ts.test(sm, W3, std::cout);
-	
-	wh_hash_table<K,V,warthog::data::aes_hash_default, warthog::data::bucket_lookup_pow2, 6, 0>
-	W4(Swh);
-	ts.test(sm, W4, std::cout);
-	
-	// wh_hash_table<K,V,warthog::data::aes_hash_default, warthog::data::bucket_lookup_pow2, 16, 0>
-	// W5(Swh);
-	// ts.test(sm, W5, std::cout);
+	wh_hash_table<K,V,warthog::data::aes_hash_default, warthog::data::bucket_lookup_pow2, 16, 0>
+	W5(Swh);
+	ts.test(sm, W5, std::cout);
 	
 	wh_hash_table<K,V,warthog::data::aes_hash_default, warthog::data::bucket_lookup_pow2, 2, 0>
 	W6(Swh);
@@ -345,6 +362,11 @@ int main()
 	// wh_hash_table<K,V,warthog::data::aes_hash_default, warthog::data::bucket_lookup_pow2, 2, 4>
 	// W8(Swh);
 	// ts.test(sm, W8, std::cout);
+	
+	
+	absl_hash_table<K,V>
+	A1(Swh);
+	ts.test(sm, A1, std::cout);
 
 	return 0;
 }
